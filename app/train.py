@@ -132,7 +132,7 @@ def run_experiment(experiment_name, data_url, param_grid, artifact_path, registe
 # Entry point for the script
 if __name__ == "__main__":
     # Define experiment parameters
-    experiment_name = "hyperparameter_tuning"
+    experiment_name = "final_project"
     data_url = "https://julie-2-next-resources.s3.eu-west-3.amazonaws.com/full-stack-full-time/linear-regression-ft/californian-housing-market-ft/california_housing_market.csv"
     param_grid = {
         "Random_Forest__n_estimators": list(range(90, 101, 10)),
