@@ -5,7 +5,7 @@ pipeline {
         stage('Checkout') {
             steps {
                 // Checkout the code from the repository
-                git branch: 'main', url: 'https://github.com/JedhaBootcamp/sample-ml-workflow.git'
+                git branch: 'main', url: 'https://github.com/VeeraK81/final-ml-flow.git'
             }
         }
 
@@ -13,7 +13,7 @@ pipeline {
             steps {
                 script {
                     // Build the Docker image using the Dockerfile
-                    sh 'docker build -t ml-pipeline-image .'
+                    sh 'docker build -t final-ml-pipeline-image .'
                 }
             }
         }
@@ -42,7 +42,7 @@ pipeline {
                     // Run a temporary Docker container and pass env variables securely via --env-file
                     sh '''
                     docker run --rm --env-file env.list \
-                    ml-pipeline-image \
+                    final-ml-pipeline-image \
                     bash -c "pytest --maxfail=1 --disable-warnings"
                     '''
                 }
