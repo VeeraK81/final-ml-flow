@@ -5,7 +5,7 @@ pipeline {
         stage('Checkout') {
             steps {
                 // Checkout the code from the repository
-                git branch: 'main', url: 'https://github.com/VeeraK81/final-ml-flow.git'
+                git branch: 'mnist', url: 'https://github.com/VeeraK81/final-ml-flow.git'
             }
         }
 
