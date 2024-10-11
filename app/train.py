@@ -168,7 +168,7 @@ if __name__ == "__main__":
         'epochs':4
     }
     artifact_path = "output_files"
-    registered_model_name = "MNIST digit recognition with CNNs in TensorFlow"
+    registered_model_name = "MNIST-MODEL"
 
     # Run the experiment
     run_experiment(experiment_name, data_url, parameters, artifact_path, registered_model_name)
