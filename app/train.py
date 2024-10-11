@@ -141,5 +141,6 @@ if __name__ == "__main__":
     artifact_path = "modeling_housing_market"
     registered_model_name = "random_forest"
 
+
     # Run the experiment
     run_experiment(experiment_name, data_url, param_grid, artifact_path, registered_model_name)
