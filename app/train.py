@@ -2,89 +2,118 @@ import pandas as pd
 import numpy as np
 import mlflow
 import time
-from sklearn.model_selection import train_test_split, GridSearchCV
+#from sklearn.model_selection import train_test_split, GridSearchCV
 from sklearn.preprocessing import StandardScaler
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.pipeline import Pipeline
 
+# ---- New libraries ----
+import os
+os.environ['TF_ENABLE_ONEDNN_OPTS'] = '0'
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '1' 
+import tensorflow as tf
+
+
 # Load data
 def load_data(url):
     """
-    Load dataset from the given URL.
-
-    Args:
-        url (str): URL to the CSV file.
-
-    Returns:
-        pd.DataFrame: Loaded dataset.
+    Instead of loading a CCS file to a dataframe, this function returns a TF dataset 
     """
-    return pd.read_csv(url)
+
+    return eval(url)
 
 # Preprocess data
-def preprocess_data(df):
+def preprocess_data(tf_ds, NUM_CLASSES=10):
     """
-    Split the dataframe into X (features) and y (target).
-
-    Args:
-        df (pd.DataFrame): Input dataframe.
-
-    Returns:
-        tuple: Split data (X_train, X_test, y_train, y_test).
+    Returns train and test datasets from the TF dataset
     """
-    X = df.iloc[:, :-1]
-    y = df.iloc[:, -1]
-    return train_test_split(X, y, test_size=0.2)
 
-# Create the pipeline
-def create_pipeline():
-    """
-    Create a machine learning pipeline with StandardScaler and RandomForestRegressor.
+    # Train and test datasets
+    train_dataset, test_dataset = [tf.data.Dataset.from_tensor_slices(tup).map(lambda image, label: 
+                                (tf.convert_to_tensor(tf.expand_dims(image, -1)), 
+                                int(tf.keras.utils.to_categorical(label, NUM_CLASSES)))
+                                                                            ) for tup in tf_ds]
 
-    Returns:
-        Pipeline: A scikit-learn pipeline object.
-    """
-    return Pipeline(steps=[
-        ("standard_scaler", StandardScaler()),
-        ("Random_Forest", RandomForestRegressor())
-    ])
+    return train_dataset, test_dataset, NUM_CLASSES
+
+# # Create the pipeline
+# def create_pipeline():
+#     """
+#     Create a machine learning pipeline with StandardScaler and RandomForestRegressor.
+
+#     Returns:
+#         Pipeline: A scikit-learn pipeline object.
+#     """
+#     return Pipeline(steps=[
+#         ("standard_scaler", StandardScaler()),
+#         ("Random_Forest", RandomForestRegressor())
+#     ])
 
 # Train model
-def train_model(pipe, X_train, y_train, param_grid, cv=2, n_jobs=-1, verbose=3):
+def train_model(train_ds, test_ds, NUM_CLASSES, parameters, verbose= 0):
     """
-    Train the model using GridSearchCV.
+    Train the CNN model 
 
-    Args:
-        pipe (Pipeline): The pipeline to use for training.
-        X_train (pd.DataFrame): Training features.
-        y_train (pd.Series): Training target.
-        param_grid (dict): The hyperparameter grid to search over.
-        cv (int): Number of cross-validation folds.
-        n_jobs (int): Number of jobs to run in parallel.
-        verbose (int): Verbosity level.
-
-    Returns:
-        GridSearchCV: Trained GridSearchCV object.
+    Returns: a TF model object
     """
-    model = GridSearchCV(pipe, param_grid, n_jobs=n_jobs, verbose=verbose, cv=cv, scoring="r2")
-    model.fit(X_train, y_train)
+
+    INPUT_SHAPE = (28,28,1) 
+
+    FILTERS = parameters['filters']
+    BATCH_SIZE = parameters['batch_size']
+    EPOCHS = parameters['epochs']
+
+    model_early_stopping = tf.keras.callbacks.EarlyStopping(monitor='categorical_accuracy', min_delta=0.001, 
+                                                            patience=1, restore_best_weights=True, verbose=verbose)
+
+    # Define the model
+    model = tf.keras.models.Sequential([
+        tf.keras.layers.Input(shape=INPUT_SHAPE, dtype=tf.float32, name="Input"),
+        tf.keras.layers.Convolution2D(filters=FILTERS, kernel_size=(5, 5), activation='relu', name='Convolution'),
+        tf.keras.layers.MaxPool2D(pool_size=3, name='Max_Pooling'),
+        tf.keras.layers.Flatten(name='Flattening'),
+        tf.keras.layers.Dense(units=256, activation='relu', name='Dense_1'),
+        tf.keras.layers.Dropout(rate=0.1, name="Dropout_1"),
+        tf.keras.layers.Dense(units=32, activation='relu', name='Dense_2'),
+        tf.keras.layers.Dropout(rate=0.1, name="Dropout_2"),
+        tf.keras.layers.Dense(NUM_CLASSES, activation='softmax')
+    ])
+
+    # Compile the model
+    model.compile(optimizer='adam', loss='categorical_crossentropy', metrics=['categorical_accuracy'])
+
+    model.fit(train_ds.batch(batch_size=BATCH_SIZE), 
+            epochs = EPOCHS,
+            validation_data = test_ds.batch(BATCH_SIZE), 
+            callbacks = [model_early_stopping],
+            verbose = verbose)
+
     return model
 
 # Log metrics and model to MLflow
-def log_metrics_and_model(model, X_train, y_train, X_test, y_test, artifact_path, registered_model_name):
+def log_metrics_and_model(model, test_ds, artifact_path, registered_model_name, verbose=0):
     """
     Log training and test metrics, and the model to MLflow.
 
     Args:
-        model (GridSearchCV): The trained model.
-        X_train (pd.DataFrame): Training features.
-        y_train (pd.Series): Training target.
-        X_test (pd.DataFrame): Test features.
-        y_test (pd.Series): Test target.
+        model (CNN w/ TF): The trained model.
+        test_ds (pd.DataFrame): Test dataset.
         artifact_path (str): Path to store the model artifact.
         registered_model_name (str): Name to register the model under in MLflow.
     """
-    mlflow.log_metric("Train Score", model.score(X_train, y_train))
-    mlflow.log_metric("Test Score", model.score(X_test, y_test))
+
+    final_val_loss, final_val_categorical_accuracy = model.evaluate(test_ds.batch(1), verbose=verbose)
+
+    mlflow.log_metric("The final out_of_sample_categorical accuracy", round(100 * final_val_categorical_accuracy, 2))
+
+    predictions = model.predict(test_ds.batch(1), verbose=verbose)
+    pickle_file = 'confusion_matrix.pkl'
+    pd.DataFrame([(label.argmax(), prediction.argmax()) for (image,label), 
+                                     prediction in zip(test_ds.as_numpy_iterator(), predictions)], columns=['True', 'Predicted']
+                ).groupby(['True', 'Predicted']).size().unstack('Predicted',fill_value=0).to_pickle(pickle_file)
+    
+    mlflow.log_artifact(pickle_file)
+
     mlflow.sklearn.log_model(
         sk_model=model,
         artifact_path=artifact_path,
@@ -92,14 +121,13 @@ def log_metrics_and_model(model, X_train, y_train, X_test, y_test, artifact_path
     )
 
 # Main function to execute the workflow
-def run_experiment(experiment_name, data_url, param_grid, artifact_path, registered_model_name):
+def run_experiment(experiment_name, data_url, artifact_path, registered_model_name):
     """
     Run the entire ML experiment pipeline.
 
     Args:
         experiment_name (str): Name of the MLflow experiment.
-        data_url (str): URL to load the dataset.
-        param_grid (dict): The hyperparameter grid for GridSearchCV.
+        data_url (str): URL to load the TF dataset.
         artifact_path (str): Path to store the model artifact.
         registered_model_name (str): Name to register the model under in MLflow.
     """
@@ -107,11 +135,11 @@ def run_experiment(experiment_name, data_url, param_grid, artifact_path, registe
     start_time = time.time()
 
     # Load and preprocess data
-    df = load_data(data_url)
-    X_train, X_test, y_train, y_test = preprocess_data(df)
+    tf_dataset = load_data(url=data_url)
+    train_dataset, test_dataset, NUM_CLASSES = preprocess_data(tf_ds=tf_dataset)
 
     # Create pipeline
-    pipe = create_pipeline()
+    #pipe = create_pipeline()
 
     # Set experiment's info 
     mlflow.set_experiment(experiment_name)
@@ -124,7 +152,7 @@ def run_experiment(experiment_name, data_url, param_grid, artifact_path, registe
 
     with mlflow.start_run(experiment_id=experiment.experiment_id):
         # Train model
-        train_model(pipe, X_train, y_train, param_grid)
+        train_model(train_dataset, test_dataset, parameters, NUM_CLASSES)
 
     # Print timing
     print(f"...Training Done! --- Total training time: {time.time() - start_time} seconds")
@@ -133,13 +161,14 @@ def run_experiment(experiment_name, data_url, param_grid, artifact_path, registe
 if __name__ == "__main__":
     # Define experiment parameters
     experiment_name = "final_project"
-    data_url = "https://julie-2-next-resources.s3.eu-west-3.amazonaws.com/full-stack-full-time/linear-regression-ft/californian-housing-market-ft/california_housing_market.csv"
-    param_grid = {
-        "Random_Forest__n_estimators": list(range(90, 101, 10)),
-        "Random_Forest__criterion": ["squared_error"]
+    data_url = 'tf.keras.datasets.mnist.load_data()'
+    parameters = {
+        'filters':6,
+        'batch_size':32,
+        'epochs':4
     }
-    artifact_path = "modeling_housing_market"
-    registered_model_name = "random_forest"
+    artifact_path = "output_files"
+    registered_model_name = "MNIST digit recognition with CNNs in TensorFlow"
 
     # Run the experiment
-    run_experiment(experiment_name, data_url, param_grid, artifact_path, registered_model_name)
+    run_experiment(experiment_name, data_url, parameters, artifact_path, registered_model_name)
