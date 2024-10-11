@@ -104,7 +104,7 @@ def log_metrics_and_model(model, test_ds, artifact_path, registered_model_name, 
 
     final_val_loss, final_val_categorical_accuracy = model.evaluate(test_ds.batch(1), verbose=verbose)
 
-    mlflow.log_metric("The final out_of_sample_categorical accuracy", round(100 * final_val_categorical_accuracy, 2))
+    mlflow.log_metric("out_of_sample_categorical_accuracy", round(100 * final_val_categorical_accuracy, 2))
 
     predictions = model.predict(test_ds.batch(1), verbose=verbose)
     pickle_file = 'confusion_matrix.pkl'
